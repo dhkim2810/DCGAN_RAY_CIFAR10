@@ -181,32 +181,46 @@ def train_example(num_workers=1, use_gpu=False, test_mode=False, args):
         "beta1" : args.beta1,
         "update_ratio" : args.update_ratio
     }
-    trainer = TorchTrainer(
+    trainer = TorchTrainer.as_trainable(
         training_operator_cls=GANOperator,
         num_workers=num_workers,
         config=config,
         use_gpu=use_gpu,
         use_tqdm=True)
 
-    if not os.path.exists(os.path.join(os.getcwd(), "checkpoint", args.trial)):
-        os.mkdir(os.path.join(os.getcwd(), "checkpoint", args.trial))
-    LOSS = []
-    from tabulate import tabulate
-    pbar = trange(20, unit="epoch")
-    for itr in pbar:
-        stats = trainer.train(info=dict(epoch_idx=itr, num_epochs=20))
-        LOSS.append(stats)
-        pbar.set_postfix(dict(loss_g=stats["loss_g"], loss_d=stats["loss_d"], IS=stats["inception"]))
-        formatted = tabulate([stats], headers="keys")
-        if itr > 0:  # Get the last line of the stats.
-            formatted = formatted.split("\n")[-1]
-        pbar.write(formatted)
+    pbt_scheduler = PopulationBasedTraining(
+        time_attr="training_iteration",
+        metric="loss_g",
+        mode="min",
+        perturbation_interval=1,
+        hyperparam_mutations={
+            "lr" : tune.uniform(0.001, 1),
+            "beta1" : [0.4, 0.5, 0.6]
+        }
+    )
 
-        torch.save(LOSS, os.path.join(os.getcwd(), "checkpoint", args.trial, "epoch_{}.loss".format(itr)))
-        torch.save(trainer.get_model(), os.path.join(os.getcwd(), "checkpoint", args.trial, "model_{}.ray".format(itr)))
+    reporter = CLIReporter()
+    reporter.add_metric_column("loss_g", "G_loss")
+    reporter.add_metric_column("loss_d", "D_loss")
 
-    return trainer
 
+    analysis = tune.run(
+        trainer,
+        num_samples=2,
+        config={
+            "lr" : tune.choice([1e-4, 2e-4, 5e-4]),
+            "beta1" : 0.5
+        },
+        stop={"training_iteration": 2 if args.smoke_test else 100},
+        max_failures=3,  # used for fault tolerance
+        checkpoint_freq=3,  # used for fault tolerance
+        keep_checkpoints_num=1,  # used for fault tolerance
+        verbose=2,
+        progress_reporter=reporter,
+        scheduler=pbt_scheduler
+    )
+
+    print(analysis.get_best_config(metric="loss_g", mode="min"))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -266,9 +280,8 @@ if __name__ == "__main__":
     else:
         ray.init(address=args.address)
 
-    trainer = train_example(
+    train_example(
         num_workers=args.num_workers,
         use_gpu=args.use_gpu,
         test_mode=args.smoke_test,
         args=args)
-    models = trainer.get_model()
