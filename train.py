@@ -53,7 +53,7 @@ class GANOperator(TrainingOperator):
         optimizers = (discriminator_opt, generator_opt)
 
         with FileLock(".ray.lock"):
-            dataset = datasets.CIFAR10(root=config.get("data_root","/dataset/CIFAR"),
+            dataset = datasets.CIFAR10(root=config.get("data_dir","/dataset/CIFAR"),
                         transform=transforms.Compose([
                             transforms.Resize(config.get("img_size", 64)),
                             transforms.CenterCrop(config.get("img_size", 64)),
@@ -75,6 +75,9 @@ class GANOperator(TrainingOperator):
 
         self.classifier = inception_v3(pretrained=True, transform_input=False).type(torch.cuda.FloatTensor)
         self.classifier.eval()
+
+        # self.ratio = config.get("update_ratio", 5) # update ratio for GAN training
+        # self.count = 0
 
     def inception_score(self, imgs, resize=False, batch_size=32, splits=1):
         """Calculate the inception score of the generated images."""
@@ -166,13 +169,14 @@ class GANOperator(TrainingOperator):
         }
 
 
-def train_example(num_workers=1, use_gpu=False, test_mode=False):
+def train_example(num_workers=1, use_gpu=False, test_mode=False, args):
     config = {
-        "data_root" : "/dataset/CIFAR",
-        "img_size" : 64,
+        "data_dir" : args.data_dir,
+        "img_size" : args.img_size,
         "test_mode": test_mode,
-        "batch_size": 16 if test_mode else 128,
-        "lr" : 2e-4
+        "batch_size": args.test_Bs if test_mode else args.bs,
+        "lr" : args.lr,
+        "update_ratio" : args.update_ratio
     }
     trainer = TorchTrainer(
         training_operator_cls=GANOperator,
@@ -181,15 +185,23 @@ def train_example(num_workers=1, use_gpu=False, test_mode=False):
         use_gpu=use_gpu,
         use_tqdm=True)
 
+
+    if not os.path.exists(os.path.join(os.getcwd(), "checkpoint", args.trial)):
+        os.mkdir(os.path.join(os.getcwd(), "checkpoint", args.trial))
+    LOSS = []
     from tabulate import tabulate
     pbar = trange(20, unit="epoch")
     for itr in pbar:
         stats = trainer.train(info=dict(epoch_idx=itr, num_epochs=20))
-        pbar.set_postfix(dict(loss_g=stats["loss_g"], loss_d=stats["loss_d"]))
+        LOSS.append(stats)
+        pbar.set_postfix(dict(loss_g=stats["loss_g"], loss_d=stats["loss_d"], IS=stats["inception"]))
         formatted = tabulate([stats], headers="keys")
         if itr > 0:  # Get the last line of the stats.
             formatted = formatted.split("\n")[-1]
         pbar.write(formatted)
+
+        torch.save(LOSS, os.path.join(os.getcwd(), "checkpoint", args.trial, "epoch_{}.loss".format(itr)))
+        torch.save(trainer.get_model(), os.path.join(os.getcwd(), "checkpoint", args.trial, "model_{}.ray".format(itr)))
 
     return trainer
 
@@ -214,16 +226,43 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enables GPU training")
+    parser.add_argument(
+        "--trial",
+        type=int, default=1
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str, default="/dataset/CIFAR"
+    )
+    parser.add_argument(
+        "img_size",
+        type=int, default=64
+    )
+    parser.add_argument(
+        "--bs",
+        type=int, default=128
+    )
+    parser.add_argument(
+        "--test_bs",
+        type=int, default=16
+    )
+    parser.add_argument(
+        "--lr",
+        type=float, default=2e-4
+    )
+    parser.add_argument(
+        "--update_ratio",
+        type=int, default=1
+    )
     args = parser.parse_args()
     if args.smoke_test:
-        ray.init(num_cpus=args.num_workers)
+        ray.init(num_cpus=2)
     else:
         ray.init(address=args.address)
 
     trainer = train_example(
         num_workers=args.num_workers,
         use_gpu=args.use_gpu,
-        test_mode=args.smoke_test)
+        test_mode=args.smoke_test,
+        args=args)
     models = trainer.get_model()
-
-    torch.save(models, "./model.ray")
