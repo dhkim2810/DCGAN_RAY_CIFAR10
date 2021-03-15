@@ -55,7 +55,7 @@ class GANOperator(TrainingOperator):
                             transforms.CenterCrop(config.get("img_size", 64)),
                             transforms.ToTensor(),
                             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-                        ]), download=True)
+                        ]), download=False)
         if config.get("test_mode"):
             dataset = torch.utils.data.Subset(dataset, list(range(config.get("test_bs", 25))))
         train_dataloader = torch.utils.data.DataLoader(

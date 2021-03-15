@@ -10,10 +10,12 @@ import torch.nn as nn
 import torch.nn.parallel
 import torch.optim as optim
 import torch.utils.data
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
 from torchvision.models.inception import inception_v3
 import numpy as np
 
-from model import Discriminator, Generator, demo_gan
+from model import Discriminator, Generator #, demo_gan
 from utils import weights_init, inception_score
 
 
@@ -25,20 +27,19 @@ def train(netD, netG, optimG, optimD, criterion, dataloader, iteration, device, 
     fake_label = 0.
 
     for i, data in enumerate(dataloader, 0):
-        if i >= train_iterations_per_step:
+        if i >= TRAIN_ITERATIONS_PER_STEP:
             break
 
         netD.zero_grad()
         real_cpu = data[0].to(device)
         b_size = real_cpu.size(0)
-        label = torch.full(
-            (b_size, ), real_label, dtype=torch.float, device=device)
+        label = torch.full((b_size, ), real_label, dtype=torch.float, device=device)
         output = netD(real_cpu).view(-1)
         errD_real = criterion(output, label)
         errD_real.backward()
         D_x = output.mean().item()
 
-        noise = torch.randn(b_size, nz, 1, 1, device=device)
+        noise = torch.randn(b_size, 100, 1, 1, device=device)
         fake = netG(noise)
         label.fill_(fake_label)
         output = netD(fake.detach()).view(-1)
@@ -56,7 +57,7 @@ def train(netD, netG, optimG, optimD, criterion, dataloader, iteration, device, 
         D_G_z2 = output.mean().item()
         optimG.step()
 
-        is_score, is_std = inception_score(fake, model_ref, resize=True, splits=10)
+        is_score, is_std = inception_score(imgs=fake, model_ref=model_ref, resize=True, splits=10)
 
         # Output training stats
         if iteration % 10 == 0:
@@ -70,22 +71,24 @@ def train(netD, netG, optimG, optimD, criterion, dataloader, iteration, device, 
 # __Train_begin__
 def dcgan_train(config):
     step = 0
+    use_cuda = config.get("use_gpu") and torch.cuda.is_available()
+    device = torch.device("cuda" if use_cuda else "cpu")
     discriminator = Discriminator(
         features=config.get("img_size", 64),
-        num_channels=3).to("cuda:0")
+        num_channels=3).to(device)
     discriminator.apply(weights_init)
 
     generator = Generator(
         latent_vector_size=config.get("latent_vector_size", 100),
         features=config.get("img_size", 64),
-        num_channels=3).to("cuda:0")
+        num_channels=3).to(device)
     generator.apply(weights_init)
 
     criterion = nn.BCELoss()
     discriminator_opt = optim.Adam(
-        discriminator.parameters(), lr=config.get("lr", 0.01), betas=(beta1, 0.999))
+        discriminator.parameters(), lr=config.get("lr", 0.01), betas=(0.5, 0.999))
     generator_opt = optim.Adam(
-        generator.parameters(), lr=config.get("lr", 0.01), betas=(beta1, 0.999))
+        generator.parameters(), lr=config.get("lr", 0.01), betas=(0.5, 0.999))
 
     with FileLock(".ray.lock"):
         dataset = datasets.CIFAR10(root=config.get("data_dir","/dataset/CIFAR"),
@@ -93,7 +96,7 @@ def dcgan_train(config):
                         transforms.Resize(config.get("img_size", 64)),
                         transforms.ToTensor(),
                         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-                    ]), download=True)
+                    ]), download=False)
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=config.get("batch_size", 128), shuffle=True, num_workers=2)
 
@@ -155,15 +158,15 @@ if __name__ == "__main__":
     args = parser.parse_args()
     ray.init()
 
-    dataloader = get_data_loader()
+    """dataloader = get_data_loader()
     if not args.smoke_test:
-        plot_images(dataloader)
+        plot_images(dataloader)"""
 
     # __tune_begin__
 
     # load the pretrained mnist classification model for inception_score
     classifier = inception_v3(pretrained=True, transform_input=False).type(torch.cuda.FloatTensor)
-    classifer.eval()
+    classifier.eval()
     # Put the model in Ray object store.
     model_ref = ray.put(classifier)
 
@@ -184,6 +187,7 @@ if __name__ == "__main__":
         stop={
             "training_iteration": tune_iter,
         },
+        resources_per_trial={'gpu':1,'cpu':2},
         metric="is_score",
         mode="max",
         num_samples=8,
@@ -198,7 +202,7 @@ if __name__ == "__main__":
             "model_ref": model_ref
         })
     # __tune_end__
-
+"""
     # demo of the trained Generators
     if not args.smoke_test:
         all_trials = analysis.trials
@@ -207,3 +211,4 @@ if __name__ == "__main__":
             for t in all_trials
         ]
         demo_gan(analysis, args)
+"""

@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import torchvision.utils as vutils
 import numpy as np
 
@@ -69,7 +70,7 @@ class Discriminator(nn.Module):
         return self.main(x)
 
 
-def demo_gan(args, epoch):
+"""def demo_gan(args, epoch):
     img_list = []
     fixed_noise = torch.randn(args.bs, 100, 1, 1)
     
@@ -84,4 +85,4 @@ def demo_gan(args, epoch):
     ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
     ani = animation.ArtistAnimation(
         fig, ims, interval=1000, repeat_delay=1000, blit=True)
-    ani.save("./generated.gif", writer="imagemagick", dpi=72)
+    ani.save("./generated.gif", writer="imagemagick", dpi=72)"""

@@ -58,26 +58,28 @@ def plot_images(dataloader):
     plt.show()
 
 
-def inception_score(self, imgs, classifier, resize=False, batch_size=32, splits=1):
+def inception_score(imgs, model_ref, resize=False, batch_size=32, splits=1):
         """Calculate the inception score of the generated images."""
         N = len(imgs)
+        dtype=torch.cuda.FloatTensor
         dataloader = torch.utils.data.DataLoader(imgs, batch_size=batch_size)
+        cm = ray.get(model_ref)
         up = nn.Upsample(
             size=(299, 299),
             mode="bilinear",
             align_corners=True
-        ).type(torch.cuda.FloatTensor)
+        ).type(dtype)
 
         def get_pred(x):
             if resize:
                 x = up(x)
-            x = classifier(x)
+            x = cm(x)
             return F.softmax(x, dim=1).data.cpu().numpy()
 
         # Obtain predictions for the fake provided images
         preds = np.zeros((N, 1000))
         for i, batch in enumerate(dataloader, 0):
-            batch = batch.type(torch.cuda.FloatTensor)
+            batch = batch.type(dtype)
             batchv = Variable(batch)
             batch_size_i = batch.size()[0]
             preds[i * batch_size:i * batch_size + batch_size_i] = get_pred(batchv)
