@@ -23,16 +23,10 @@ from ray.tune.schedulers import PopulationBasedTraining
 from ray.util.sgd.utils import override
 from ray.util.sgd.torch import TorchTrainer, TrainingOperator
 
-from model import Discriminator, Generator
+from model import Discriminator, Generator, weights_init
 
-
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find("Conv") != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find("BatchNorm") != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
+import warnings
+warnings.filterwarnings("ignore")
 
 
 class GANOperator(TrainingOperator):
@@ -50,7 +44,7 @@ class GANOperator(TrainingOperator):
             betas=(config.get("beta1",0.5), 0.999))
         generator_opt = optim.Adam(
             generator.parameters(),
-            lr=config.get("lr", 0.01),
+            lr=config.get("lr", 0.01), 
             betas=(config.get("beta1",0.5), 0.999))
         optimizers = (discriminator_opt, generator_opt)
 
@@ -171,12 +165,12 @@ class GANOperator(TrainingOperator):
         }
 
 
-def train_example(num_workers=1, use_gpu=False, test_mode=False, args):
+def train_example(num_workers, use_gpu, test_mode, args):
     config = {
         "data_dir" : args.data_dir,
         "img_size" : args.img_size,
         "test_mode": test_mode,
-        "batch_size": args.test_Bs if test_mode else args.bs,
+        "batch_size": args.test_bs if test_mode else args.bs,
         "lr" : args.lr,
         "beta1" : args.beta1,
         "update_ratio" : args.update_ratio
@@ -186,10 +180,10 @@ def train_example(num_workers=1, use_gpu=False, test_mode=False, args):
         num_workers=num_workers,
         config=config,
         use_gpu=use_gpu,
-        use_tqdm=True)
+        use_tqdm=False)
 
-    if not os.path.exists(os.path.join(os.getcwd(), "checkpoint", args.trial)):
-        os.mkdir(os.path.join(os.getcwd(), "checkpoint", args.trial))
+    if not os.path.exists(os.path.join(os.getcwd(), "checkpoint", str(args.trial))):
+        os.mkdir(os.path.join(os.getcwd(), "checkpoint", str(args.trial)))
     LOSS = []
     from tabulate import tabulate
     pbar = trange(20, unit="epoch")
@@ -197,70 +191,39 @@ def train_example(num_workers=1, use_gpu=False, test_mode=False, args):
         stats = trainer.train(info=dict(epoch_idx=itr, num_epochs=20))
         LOSS.append(stats)
         pbar.set_postfix(dict(loss_g=stats["loss_g"], loss_d=stats["loss_d"], IS=stats["inception"]))
+        
         formatted = tabulate([stats], headers="keys")
         if itr > 0:  # Get the last line of the stats.
             formatted = formatted.split("\n")[-1]
         pbar.write(formatted)
+        
 
-        torch.save(LOSS, os.path.join(os.getcwd(), "checkpoint", args.trial, "epoch_{}.loss".format(itr)))
-        torch.save(trainer.get_model(), os.path.join(os.getcwd(), "checkpoint", args.trial, "model_{}.ray".format(itr)))
+        torch.save(LOSS, os.path.join(os.getcwd(), "checkpoint", str(args.trial), "epoch_{}.loss".format(itr)))
+        torch.save(trainer.get_model(), os.path.join(os.getcwd(), "checkpoint", str(args.trial), "model_{}.ray".format(itr)))
 
     return trainer
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--smoke-test", action="store_true", help="Finish quickly for testing")
-    parser.add_argument(
-        "--address",
-        required=False,
-        type=str,
+    parser.add_argument("--smoke-test", action="store_true", help="Finish quickly for testing")
+    parser.add_argument("--address", required=False, type=str,
         help="the address to use to connect to a cluster.")
-    parser.add_argument(
-        "--num-workers",
-        "-n",
-        type=int,
-        default=1,
+    parser.add_argument("--num-workers", "-n", type=int, default=1,
         help="Sets number of workers for training.")
-    parser.add_argument(
-        "--use-gpu",
-        action="store_true",
-        default=False,
+    parser.add_argument("--use-gpu", action="store_true", default=False,
         help="Enables GPU training")
-    parser.add_argument(
-        "--trial",
-        type=int, default=1
-    )
-    parser.add_argument(
-        "--data_dir",
-        type=str, default="/dataset/CIFAR"
-    )
-    parser.add_argument(
-        "img_size",
-        type=int, default=64
-    )
-    parser.add_argument(
-        "--bs",
-        type=int, default=128
-    )
-    parser.add_argument(
-        "--test_bs",
-        type=int, default=16
-    )
-    parser.add_argument(
-        "--lr",
-        type=float, default=2e-4
-    )
-    parser.add_argument(
-        "--beta1",
-        type=float, default=0.5
-    )
-    parser.add_argument(
-        "--update_ratio",
-        type=int, default=1
-    )
+    parser.add_argument("--trial", type=int, default=1)
+    parser.add_argument("--data_dir", type=str, default="/dataset/CIFAR")
+    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoint")
+    parser.add_argument("--img_size", type=int, default=64)
+    parser.add_argument("--bs", type=int, default=128)
+    parser.add_argument("--test_bs", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument("--beta1", type=float, default=0.5)
+    parser.add_argument("--update_ratio", type=int, default=1)
     args = parser.parse_args()
+
     if args.smoke_test:
         ray.init(num_cpus=2)
     else:

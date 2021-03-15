@@ -1,5 +1,10 @@
+import os
 import torch
-import torch.nn as nn
+import torchvision.utils as vutils
+import numpy as np
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 
 class Generator(nn.Module):
     def build_layer (self, latent_vector_size, features, num_channels):
@@ -62,3 +67,21 @@ class Discriminator(nn.Module):
 
     def forward(self, x):
         return self.main(x)
+
+
+def demo_gan(args, epoch):
+    img_list = []
+    fixed_noise = torch.randn(args.bs, 100, 1, 1)
+    
+    loadedG = Generator()
+    loadedG.load_state_dict(torch.load(os.path.join(args.checkpoint, "netG_{}.ray".format(epoch)))
+    with torch.no_grad():
+        fake = loadedG(fixed_noise).detach().cpu()
+    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+
+    fig = plt.figure(figsize=(8, 8))
+    plt.axis("off")
+    ims = [[plt.imshow(np.transpose(i, (1, 2, 0)), animated=True)] for i in img_list]
+    ani = animation.ArtistAnimation(
+        fig, ims, interval=1000, repeat_delay=1000, blit=True)
+    ani.save("./generated.gif", writer="imagemagick", dpi=72)
